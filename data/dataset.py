@@ -28,7 +28,7 @@ class DepthDataset(Dataset):
         # get depth embedding path
         depth_emb_path = os.path.join(self.pt_path, '{}.pt'.format(relative_path.split('.')[0]))
         # get depth map path
-        depth_path = = os.path.join(self.depth_map_path, '{}.pt'.format(relative_path.split('.')[0]))
+        depth_path = os.path.join(self.depth_map_path, '{}.pt'.format(relative_path.split('.')[0]))
 
         #get the scene graph path
         scenegraph_path = os.path.join(self.sg_path, '{}.h5'.format(relative_path.split('.')[0]))
