@@ -42,9 +42,14 @@ class DepthDataset(Dataset):
         ## Depth Embedding
         depth_emb = torch.load(depth_emb_path)
 
-
         ## depth map
         depth_map = torch.load(depth_map_path)
+
+        ## get the actual depth
+        actual_depth_path = img_path.replace("rgb", "sync_depth").replace('.jpg', '.png')
+        actual_depth = Image.open(actual_depth_path)
+
+
 
         ## Scene Graph
         threshold = 0.1
@@ -82,6 +87,7 @@ class DepthDataset(Dataset):
             'image': img,
             'depth_emb': depth_emb,
             'depth_map': depth_map,
+            'depth': actual_depth,
             'scene_graph': obj_relationship
 
         }
