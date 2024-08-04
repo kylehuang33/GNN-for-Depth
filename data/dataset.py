@@ -7,12 +7,16 @@ import h5py, torch, cv2
 
 
 class DepthDataset(Dataset):
-    def __init__(self, data_path, transform=None, ext="jpg"):
-        self.filenames = glob.glob(os.path.join(data_path, '**', ext), recursive=True)
-        self.data_path = "/home3/fsml62/LLM_and_SGG_for_MDE/dataset/nyu_depth_v2"
+    def __init__(self, data_path = "/home3/fsml62/LLM_and_SGG_for_MDE/dataset/nyu_depth_v2/official_splits", transform=None, ext="jpg", mode='train'):
+        
+        self.data_path = os.path.join(data_path, mode)
+        
+        self.filenames = glob.glob(os.path.join(self.data_path, '**', '*.{}'.format(ext)), recursive=True)
         self.pt_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/nyu_depth_v2"
         self.depth_map_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/depth_map/nyu_depth_v2"
         self.sg_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/SGG/nyu_depth_v2"
+
+        self.mode = mode
 
 
 
