@@ -3,19 +3,22 @@ import os, random, glob
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision import transforms
 import h5py, torch, cv2
 
 
 class DepthDataset(Dataset):
+    
     def __init__(self, data_path = "/home3/fsml62/LLM_and_SGG_for_MDE/dataset/nyu_depth_v2/official_splits", transform=None, ext="jpg", mode='train'):
         
-        # self.data_path = os.path.join(data_path, mode)
+        self.data_path = data_path
         
         self.filenames = glob.glob(os.path.join(self.data_path, mode, '**', '*.{}'.format(ext)), recursive=True)
-        self.pt_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/nyu_depth_v2"
-        self.depth_map_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/depth_map/nyu_depth_v2"
-        self.sg_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/SGG/nyu_depth_v2"
+        self.pt_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/depth_embedding/nyu_depth_v2/official_splits"
+        self.depth_map_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/depth_map/nyu_depth_v2/official_splits"
+        self.sg_path = "/home3/fsml62/LLM_and_SGG_for_MDE/GNN_for_MDE/results/SGG/nyu_depth_v2/official_splits"
 
+        self.transform = transform if transform else transforms.ToTensor()
         self.mode = mode
 
 
@@ -43,7 +46,7 @@ class DepthDataset(Dataset):
         depth_emb = torch.load(depth_emb_path)
 
         ## depth map
-        depth_map = torch.load(depth_map_path)
+        depth_map = torch.load(depth_path)
 
         ## get the actual depth
         actual_depth_path = img_path.replace("rgb", "sync_depth").replace('.jpg', '.png')
@@ -52,7 +55,7 @@ class DepthDataset(Dataset):
 
 
         ## Scene Graph
-        threshold = 0.1
+        threshold = 0.5
 
         with h5py.File(scenegraph_path, 'r') as h5_file:
             # Load each tensor into a dictionary
@@ -62,12 +65,30 @@ class DepthDataset(Dataset):
         probas = loaded_output_dict['rel_logits'].softmax(-1)[0, :, :-1]
         probas_sub = loaded_output_dict['sub_logits'].softmax(-1)[0, :, :-1]
         probas_obj = loaded_output_dict['obj_logits'].softmax(-1)[0, :, :-1]
+        
+        
         keep = torch.logical_and(probas.max(-1).values > threshold, 
                                 torch.logical_and(probas_sub.max(-1).values > threshold, probas_obj.max(-1).values > threshold))
         
-        sub_bboxes_scaled = rescale_bboxes(loaded_output_dict['sub_boxes'][0, keep], img.size)
-        obj_bboxes_scaled = rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
-        relations = outputs['rel_logits'][0, keep]
+#         mini_threshold = 0.1
+#         # Calculate the keep mask with an additional check for valid bounding boxes
+#         valid_bboxes = (loaded_output_dict['sub_boxes'][0, :, 2] > mini_threshold) & (loaded_output_dict['sub_boxes'][0, :, 3] > mini_threshold) & \
+#                        (loaded_output_dict['obj_boxes'][0, :, 2] > mini_threshold) & (loaded_output_dict['obj_boxes'][0, :, 3] > mini_threshold)
+
+#         keep = torch.logical_and(
+#             probas.max(-1).values > threshold, 
+#             torch.logical_and(
+#                 probas_sub.max(-1).values > threshold, 
+#                 torch.logical_and(probas_obj.max(-1).values > threshold, valid_bboxes)
+#             )
+#         )
+        
+        
+        
+        
+        sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, keep], img.size)
+        obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
+        relations = loaded_output_dict['rel_logits'][0, keep]
         
         probas_dic = {
             'probas': probas[keep],
@@ -80,6 +101,46 @@ class DepthDataset(Dataset):
             'bbox_sub': sub_bboxes_scaled,
             'bbox_obj': obj_bboxes_scaled
         }
+        
+        
+        # Apply transform to image and depth
+        img = self.transform(img)
+        actual_depth = self.transform(actual_depth).float()
+        
+        
+        
+        target_size = (25, 25)
+        
+        # Apply the pooling function to the current batch element
+        pooled_sub_images, pooled_obj_images = self.pool_visual_content_and_depth(
+            sub_bboxes_list=sub_bboxes_scaled,
+            obj_bboxes_list=obj_bboxes_scaled,
+            image=img,
+            target_size=target_size)
+        
+        pooled_sub_depths, pooled_obj_depths = self.pool_visual_content_and_depth(
+            sub_bboxes_list=sub_bboxes_scaled,
+            obj_bboxes_list=obj_bboxes_scaled,
+            image=depth_emb[0],
+            target_size=target_size)
+        
+        pooled_sub_act_depths, pooled_obj_act_depths = self.pool_visual_content_and_depth(
+            sub_bboxes_list=sub_bboxes_scaled,
+            obj_bboxes_list=obj_bboxes_scaled,
+            image=actual_depth,
+            target_size=target_size)
+         
+        
+        pooled_visuals = {
+            'sub_imgs': pooled_sub_images, 
+            'obj_imgs': pooled_obj_images, 
+            'sub_depth_emb': pooled_sub_depths, 
+            'obj_depth_emb': pooled_obj_depths,
+            'sub_act_depths': pooled_sub_act_depths,
+            'obj_act_depths': pooled_obj_act_depths
+        }
+#         pooled_visuals = None
+        
 
 
         ## return data
@@ -88,27 +149,125 @@ class DepthDataset(Dataset):
             'depth_emb': depth_emb,
             'depth_map': depth_map,
             'depth': actual_depth,
-            'scene_graph': obj_relationship
+            'scene_graphs': obj_relationship,
+            'pooled_visuals': pooled_visuals
 
         }
-
+        
+        
         return data
 
     def __len__(self):
         return len(self.filenames)
-
-
-    def box_cxcywh_to_xyxy(x):
+    
+    def box_cxcywh_to_xyxy(self, x):
 
         x_c, y_c, w, h = x.unbind(1)
         b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
     
         return torch.stack(b, dim=1)
-
-    def rescale_bboxes(out_bbox, size):
+    
+    def rescale_bboxes(self, out_bbox, size):
 
         img_w, img_h = size
-        b = box_cxcywh_to_xyxy(out_bbox)
+        b = self.box_cxcywh_to_xyxy(out_bbox)
         b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
+        
+        b = torch.round(b).int()
 
         return b
+    
+#     def pool_visual_content_and_depth(self, sub_bboxes_list, obj_bboxes_list, image, depth_embedding, target_size=(224, 224)):
+#         # Define the pooling operation
+#         pool = nn.AdaptiveAvgPool2d(target_size)
+
+#         # Pooling subject images
+#         pooled_sub_images = []
+#         pooled_sub_depths = []
+#         for bbox in sub_bboxes_list:
+#             # Crop the image based on the bounding box
+#             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+#             # Apply pooling
+#             pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)  # Add batch dim, then remove after pooling
+#             # Flatten the pooled image
+#             flattened_img = pooled_img.view(-1)
+#             pooled_sub_images.append(flattened_img)
+
+#             # Crop and pool the depth embedding for the corresponding bbox
+#             cropped_depth = depth_embedding[:, :, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+#             pooled_depth = pool(cropped_depth).view(-1)
+#             pooled_sub_depths.append(pooled_depth)
+
+#         # Pooling object images
+#         pooled_obj_images = []
+#         pooled_obj_depths = []
+#         for bbox in obj_bboxes_list:
+#             # Crop the image based on the bounding box
+#             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+#             # Apply pooling
+#             pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)
+#             # Flatten the pooled image
+#             flattened_img = pooled_img.view(-1)
+#             pooled_obj_images.append(flattened_img)
+
+#             # Crop and pool the depth embedding for the corresponding bbox
+#             cropped_depth = depth_embedding[:, :, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+#             pooled_depth = pool(cropped_depth).view(-1)
+#             pooled_obj_depths.append(pooled_depth)
+
+#         # Convert lists to tensors
+#         pooled_sub_images = torch.stack(pooled_sub_images) if pooled_sub_images else torch.empty(0)
+#         pooled_obj_images = torch.stack(pooled_obj_images) if pooled_obj_images else torch.empty(0)
+#         pooled_sub_depths = torch.stack(pooled_sub_depths) if pooled_sub_depths else torch.empty(0)
+#         pooled_obj_depths = torch.stack(pooled_obj_depths) if pooled_obj_depths else torch.empty(0)
+
+#         return pooled_sub_images, pooled_obj_images, pooled_sub_depths, pooled_obj_depths
+
+
+    
+    def pool_visual_content_and_depth(self, sub_bboxes_list, obj_bboxes_list, image, target_size=(224, 224), actual=False):
+        # Define the pooling operation
+        pool = nn.AdaptiveAvgPool2d(target_size)
+
+        # Pooling subject images
+        pooled_sub_images = []
+
+        for bbox in sub_bboxes_list:
+            # Crop the image based on the bounding box
+            cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+            
+            if cropped_img.dim() == 2:
+                cropped_img = cropped_img.unsqueeze(0)
+            
+            
+            # Apply pooling
+            pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)  # Add batch dim, then remove after pooling
+            # Flatten the pooled image
+            flattened_img = pooled_img.view(-1)
+            pooled_sub_images.append(flattened_img)
+
+
+        # Pooling object images
+        pooled_obj_images = []
+        
+        for bbox in obj_bboxes_list:
+            # Crop the image based on the bounding box
+            cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+            
+            
+            if cropped_img.dim() == 2:
+                cropped_img = cropped_img.unsqueeze(0)
+            
+            
+            # Apply pooling
+            pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)
+            # Flatten the pooled image
+            flattened_img = pooled_img.view(-1)
+            pooled_obj_images.append(flattened_img)
+
+
+        # Convert lists to tensors
+        pooled_sub_images = torch.stack(pooled_sub_images) if pooled_sub_images else torch.empty(0)
+        pooled_obj_images = torch.stack(pooled_obj_images) if pooled_obj_images else torch.empty(0)
+
+        return pooled_sub_images, pooled_obj_images
