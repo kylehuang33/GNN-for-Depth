@@ -92,6 +92,19 @@ class DepthDataset(Dataset):
         sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, keep], img.size)
         obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
         relations = loaded_output_dict['rel_logits'][0, keep]
+
+        valid_sub_bboxes = self.validate_bounding_boxes(sub_bboxes, img.size)
+        valid_obj_bboxes = self.validate_bounding_boxes(obj_bboxes, img.size)
+
+        # Combine validity of subject and object bounding boxes
+        valid_pairs = torch.tensor([vs and vo for vs, vo in zip(valid_sub_bboxes, valid_obj_bboxes)])
+
+        # Apply the updated keep mask
+        sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, valid_pairs], img.size)
+        obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, valid_pairs], img.size)
+        relations = loaded_output_dict['rel_logits'][0, valid_pairs]
+
+
         
         probas_dic = {
             'probas': probas[keep],
@@ -179,52 +192,24 @@ class DepthDataset(Dataset):
         b = torch.round(b).int()
 
         return b
-    
-#     def pool_visual_content_and_depth(self, sub_bboxes_list, obj_bboxes_list, image, depth_embedding, target_size=(224, 224)):
-#         # Define the pooling operation
-#         pool = nn.AdaptiveAvgPool2d(target_size)
 
-#         # Pooling subject images
-#         pooled_sub_images = []
-#         pooled_sub_depths = []
-#         for bbox in sub_bboxes_list:
-#             # Crop the image based on the bounding box
-#             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
-#             # Apply pooling
-#             pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)  # Add batch dim, then remove after pooling
-#             # Flatten the pooled image
-#             flattened_img = pooled_img.view(-1)
-#             pooled_sub_images.append(flattened_img)
+    def validate_bounding_boxes(self, bboxes, img_size):
+        """Return a list of booleans indicating whether each bounding box is valid."""
+        valid_bboxes = []
+        img_w, img_h = img_size
 
-#             # Crop and pool the depth embedding for the corresponding bbox
-#             cropped_depth = depth_embedding[:, :, bbox[1]:bbox[3], bbox[0]:bbox[2]]
-#             pooled_depth = pool(cropped_depth).view(-1)
-#             pooled_sub_depths.append(pooled_depth)
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox
+            if x1 < 0: x1 = 0
+            if y1 < 0: y1 = 0
+            if x2 > img_w: x2 = img_w
+            if y2 > img_h: y2 = img_h
+            if x2 > x1 and y2 > y1:
+                valid_bboxes.append(True)
+            else:
+                valid_bboxes.append(False)
 
-#         # Pooling object images
-#         pooled_obj_images = []
-#         pooled_obj_depths = []
-#         for bbox in obj_bboxes_list:
-#             # Crop the image based on the bounding box
-#             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
-#             # Apply pooling
-#             pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)
-#             # Flatten the pooled image
-#             flattened_img = pooled_img.view(-1)
-#             pooled_obj_images.append(flattened_img)
-
-#             # Crop and pool the depth embedding for the corresponding bbox
-#             cropped_depth = depth_embedding[:, :, bbox[1]:bbox[3], bbox[0]:bbox[2]]
-#             pooled_depth = pool(cropped_depth).view(-1)
-#             pooled_obj_depths.append(pooled_depth)
-
-#         # Convert lists to tensors
-#         pooled_sub_images = torch.stack(pooled_sub_images) if pooled_sub_images else torch.empty(0)
-#         pooled_obj_images = torch.stack(pooled_obj_images) if pooled_obj_images else torch.empty(0)
-#         pooled_sub_depths = torch.stack(pooled_sub_depths) if pooled_sub_depths else torch.empty(0)
-#         pooled_obj_depths = torch.stack(pooled_obj_depths) if pooled_obj_depths else torch.empty(0)
-
-#         return pooled_sub_images, pooled_obj_images, pooled_sub_depths, pooled_obj_depths
+        return valid_bboxes
 
 
     
@@ -237,6 +222,8 @@ class DepthDataset(Dataset):
 
         for bbox in sub_bboxes_list:
             # Crop the image based on the bounding box
+            bbox = self.validate_bounding_box(bbox, image.size()[1:])  # Adjust bbox
+
             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
             
             if cropped_img.dim() == 2:
