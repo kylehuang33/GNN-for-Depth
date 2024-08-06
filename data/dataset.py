@@ -6,6 +6,9 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 import h5py, torch, cv2
 
+from torch import nn, optim
+
+
 
 class DepthDataset(Dataset):
     
