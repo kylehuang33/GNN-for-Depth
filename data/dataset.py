@@ -152,14 +152,14 @@ class DepthDataset(Dataset):
             # Return a flag or skip the item
             return None
         
-        pooled_visuals = {
-            'sub_imgs': pooled_sub_images, 
-            'obj_imgs': pooled_obj_images, 
-            'sub_depth_emb': pooled_sub_depths, 
-            'obj_depth_emb': pooled_obj_depths,
-            'sub_act_depths': pooled_sub_act_depths,
-            'obj_act_depths': pooled_obj_act_depths
-        }
+        # pooled_visuals = {
+        #     'sub_imgs': pooled_sub_images, 
+        #     'obj_imgs': pooled_obj_images, 
+        #     'sub_depth_emb': pooled_sub_depths, 
+        #     'obj_depth_emb': pooled_obj_depths,
+        #     'sub_act_depths': pooled_sub_act_depths,
+        #     'obj_act_depths': pooled_obj_act_depths
+        # }
 #         pooled_visuals = None
         
 
@@ -170,8 +170,17 @@ class DepthDataset(Dataset):
             'depth_emb': depth_emb,
             'depth_map': depth_map,
             'depth': actual_depth,
-            'scene_graphs': obj_relationship,
-            'pooled_visuals': pooled_visuals
+            # 'scene_graphs': obj_relationship,
+            'relation': relations,
+            'bbox_sub': sub_bboxes_scaled,
+            'bbox_obj': obj_bboxes_scaled,
+            # 'pooled_visuals': pooled_visuals
+            'sub_imgs': pooled_sub_images, 
+            'obj_imgs': pooled_obj_images, 
+            'sub_depth_emb': pooled_sub_depths, 
+            'obj_depth_emb': pooled_obj_depths,
+            'sub_act_depths': pooled_sub_act_depths,
+            'obj_act_depths': pooled_obj_act_depths
 
         }
         
