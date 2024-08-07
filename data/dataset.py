@@ -5,6 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 import h5py, torch, cv2
+import numpy as np
 
 from torch import nn, optim
 
@@ -12,7 +13,7 @@ from torch import nn, optim
 
 class DepthDataset(Dataset):
     
-    def __init__(self, data_path = "/home3/fsml62/LLM_and_SGG_for_MDE/dataset/nyu_depth_v2/official_splits", transform=None, ext="jpg", mode='train'):
+    def __init__(self, data_path = "/home3/fsml62/LLM_and_SGG_for_MDE/dataset/nyu_depth_v2/official_splits", transform=None, ext="jpg", mode='train', threshold=0.06):
         
         self.data_path = data_path
         
@@ -23,6 +24,7 @@ class DepthDataset(Dataset):
 
         self.transform = transform if transform else transforms.ToTensor()
         self.mode = mode
+        self.threshold = threshold
 
 
 
@@ -58,20 +60,23 @@ class DepthDataset(Dataset):
 
 
         ## Scene Graph
-        threshold = 0.1
+        # threshold = 0.1
 
+        # with h5py.File(scenegraph_path, 'r') as h5_file:
+        #     # Load each tensor into a dictionary
+        #     # outputs = {key: torch.from_numpy(h5_file[key][:]) for key in h5_file.keys()}
+        #     loaded_output_dict = {key: torch.tensor(h5_file[key]) for key in h5_file.keys()}
         with h5py.File(scenegraph_path, 'r') as h5_file:
-            # Load each tensor into a dictionary
-            # outputs = {key: torch.from_numpy(h5_file[key][:]) for key in h5_file.keys()}
-            loaded_output_dict = {key: torch.tensor(h5_file[key]) for key in h5_file.keys()}
+            loaded_output_dict = {key: torch.tensor(np.array(h5_file[key])) for key in h5_file.keys()}
+
 
         probas = loaded_output_dict['rel_logits'].softmax(-1)[0, :, :-1]
         probas_sub = loaded_output_dict['sub_logits'].softmax(-1)[0, :, :-1]
         probas_obj = loaded_output_dict['obj_logits'].softmax(-1)[0, :, :-1]
         
         
-        keep = torch.logical_and(probas.max(-1).values > threshold, 
-                                torch.logical_and(probas_sub.max(-1).values > threshold, probas_obj.max(-1).values > threshold))
+        keep = torch.logical_and(probas.max(-1).values > self.threshold, 
+                                torch.logical_and(probas_sub.max(-1).values > self.threshold, probas_obj.max(-1).values > self.threshold))
         
 #         mini_threshold = 0.1
 #         # Calculate the keep mask with an additional check for valid bounding boxes
