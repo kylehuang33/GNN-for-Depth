@@ -17,6 +17,17 @@ def custom_collate(batch):
 
     # scene_graphs = [item['scene_graphs'] for item in batch]
     relations = torch.stack([item['relation'] for item in batch])
+
+
+    # Pad relations to the same size
+    padded_relations = [torch.nn.functional.pad(item['relation'], 
+                        (0, 0, 0, max_rel_size - item['relation'].size(0))) for item in batch]
+    relations = torch.stack(padded_relations)
+
+
+
+
+
     bbox_subs = torch.stack([item['bbox_sub'] for item in batch])
     bbox_objs = torch.stack([item['bbox_obj'] for item in batch])
     # pooled_visuals = [item['pooled_visuals'] for item in batch]
@@ -40,8 +51,8 @@ def custom_collate(batch):
         #'pooled_visuals': pooled_visuals
         'sub_imgs': sub_imgs,
         'obj_imgs': obj_imgs,
-        'sub_depth_emb': sub_depth_embs,
-        'obj_depth_emb': obj_depth_embs,
+        'sub_depth_emb': sub_depth_emb,
+        'obj_depth_emb': obj_depth_emb,
         'sub_act_depths': sub_act_depths,
         'obj_act_depths': obj_act_depths
 

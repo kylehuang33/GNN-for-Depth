@@ -58,7 +58,7 @@ class DepthDataset(Dataset):
 
 
         ## Scene Graph
-        threshold = 0.5
+        threshold = 0.1
 
         with h5py.File(scenegraph_path, 'r') as h5_file:
             # Load each tensor into a dictionary
@@ -112,11 +112,11 @@ class DepthDataset(Dataset):
 #             'probas_obj': probas_obj[keep]
 #         }
 
-        obj_relationship = {
-            'relation': relations,
-            'bbox_sub': sub_bboxes_scaled,
-            'bbox_obj': obj_bboxes_scaled
-        }
+        # obj_relationship = {
+        #     'relation': relations,
+        #     'bbox_sub': sub_bboxes_scaled,
+        #     'bbox_obj': obj_bboxes_scaled
+        # }
         
         
         # Apply transform to image and depth
@@ -148,9 +148,9 @@ class DepthDataset(Dataset):
         
         
         
-        if pooled_sub_images.numel() == 0 or pooled_obj_images.numel() == 0 or pooled_sub_depths.numel() == 0 or pooled_obj_depths.numel() == 0:
-            # Return a flag or skip the item
-            return None
+        # if pooled_sub_images.numel() == 0 or pooled_obj_images.numel() == 0 or pooled_sub_depths.numel() == 0 or pooled_obj_depths.numel() == 0:
+        #     # Return a flag or skip the item
+        #     return None
         
         # pooled_visuals = {
         #     'sub_imgs': pooled_sub_images, 
@@ -204,6 +204,11 @@ class DepthDataset(Dataset):
         b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
         
         b = torch.round(b).int()
+
+        b[:, 0] = torch.clamp(b[:, 0], min=0, max=img_w)
+        b[:, 1] = torch.clamp(b[:, 1], min=0, max=img_h)
+        b[:, 2] = torch.clamp(b[:, 2], min=0, max=img_w)
+        b[:, 3] = torch.clamp(b[:, 3], min=0, max=img_h)
 
         return b
 
