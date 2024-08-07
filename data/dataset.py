@@ -93,24 +93,24 @@ class DepthDataset(Dataset):
         obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
         relations = loaded_output_dict['rel_logits'][0, keep]
 
-        valid_sub_bboxes = self.validate_bounding_boxes(sub_bboxes, img.size)
-        valid_obj_bboxes = self.validate_bounding_boxes(obj_bboxes, img.size)
+        valid_sub_bboxes = self.validate_bounding_boxes(sub_bboxes_scaled, img.size)
+        valid_obj_bboxes = self.validate_bounding_boxes(obj_bboxes_scaled, img.size)
 
         # Combine validity of subject and object bounding boxes
-        valid_pairs = torch.tensor([vs and vo for vs, vo in zip(valid_sub_bboxes, valid_obj_bboxes)])
+        valid_pairs = torch.tensor([vs and vo for vs, vo in zip(valid_sub_bboxes, valid_obj_bboxes)], dtype=torch.bool)
 
         # Apply the updated keep mask
-        sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, valid_pairs], img.size)
-        obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, valid_pairs], img.size)
-        relations = loaded_output_dict['rel_logits'][0, valid_pairs]
+        sub_bboxes_scaled = sub_bboxes_scaled[valid_pairs]
+        obj_bboxes_scaled = obj_bboxes_scaled[valid_pairs]
+        relations = relations[valid_pairs]
 
 
         
-        probas_dic = {
-            'probas': probas[keep],
-            'probas_sub': probas_sub[keep],
-            'probas_obj': probas_obj[keep]
-        }
+#         probas_dic = {
+#             'probas': probas[keep],
+#             'probas_sub': probas_sub[keep],
+#             'probas_obj': probas_obj[keep]
+#         }
 
         obj_relationship = {
             'relation': relations,
@@ -145,7 +145,12 @@ class DepthDataset(Dataset):
             obj_bboxes_list=obj_bboxes_scaled,
             image=actual_depth,
             target_size=target_size)
-         
+        
+        
+        
+        if pooled_sub_images.numel() == 0 or pooled_obj_images.numel() == 0 or pooled_sub_depths.numel() == 0 or pooled_obj_depths.numel() == 0:
+            # Return a flag or skip the item
+            return None
         
         pooled_visuals = {
             'sub_imgs': pooled_sub_images, 
@@ -222,8 +227,6 @@ class DepthDataset(Dataset):
 
         for bbox in sub_bboxes_list:
             # Crop the image based on the bounding box
-            bbox = self.validate_bounding_box(bbox, image.size()[1:])  # Adjust bbox
-
             cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
             
             if cropped_img.dim() == 2:
