@@ -18,11 +18,12 @@ def custom_collate(batch):
     # scene_graphs = [item['scene_graphs'] for item in batch]
     relations = torch.stack([item['relation'] for item in batch])
 
+    # max_rel_size = max(item['relation'].size(0) for item in batch)
 
-    # Pad relations to the same size
-    padded_relations = [torch.nn.functional.pad(item['relation'], 
-                        (0, 0, 0, max_rel_size - item['relation'].size(0))) for item in batch]
-    relations = torch.stack(padded_relations)
+    # # Pad relations to the same size
+    # padded_relations = [torch.nn.functional.pad(item['relation'], 
+    #                     (0, 0, 0, max_rel_size - item['relation'].size(0))) for item in batch]
+    # relations = torch.stack(padded_relations)
 
 
 
