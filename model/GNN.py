@@ -1,39 +1,50 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch_geometric.nn import MessagePassing
+# from torch_geometric.data import DataLoader, Batch
 import torch.nn.functional as F
 
-class DepthGNNModel(nn.Module):
-    def __init__(self, node_features_size, depth_features_size, edge_features_size):
-        super(DepthGNNModel, self).__init__()
-        
-        self.node_mlp = nn.Sequential(
-            nn.Linear(node_features_size + depth_features_size, 4096),
+# Define the model
+class DepthGNNModel(MessagePassing):
+    def __init__(self, node_features_size, edge_features_size, hidden_channels, output_size):
+        super(DepthGNNModel, self).__init__(aggr='add')  # Aggregation: sum, mean, or max
+
+        # MLP to generate messages
+        self.message_mlp = nn.Sequential(
+            nn.Linear(2 * node_features_size + edge_features_size, 2048),
             nn.LeakyReLU(inplace=True),
             nn.Dropout(p=0.5),  # Dropout layer
+            nn.Linear(2048, 1024),
+            nn.LeakyReLU(inplace=True),
+            nn.Dropout(p=0.3),
+            nn.Linear(1024, hidden_channels)
+        )
+
+        # MLP to update node features
+        self.node_mlp = nn.Sequential(
+            nn.Linear(node_features_size + hidden_channels, 4096),
+            nn.LeakyReLU(inplace=True),
+            nn.Dropout(p=0.3),
             nn.Linear(4096, 2048),
             nn.LeakyReLU(inplace=True),
-            nn.Dropout(p=0.5),  # Dropout layer
+            nn.Dropout(p=0.3),
             nn.Linear(2048, 1024),
             nn.LeakyReLU(inplace=True),
-            nn.Dropout(p=0.5),  # Dropout layer
-            nn.Linear(1024, 625)  # Output a flattened 25x25 depth map
+            nn.Dropout(p=0.3),
+            nn.Linear(1024, output_size)  # Output a flattened 25x25 depth map
         )
 
-        self.edge_mlp = nn.Sequential(
-            nn.Linear((node_features_size + depth_features_size) * 2 + edge_features_size, 2048),
-            nn.LeakyReLU(inplace=True),
-            nn.Dropout(p=0.5),  # Dropout layer
-            nn.Linear(2048, 1024),
-            nn.LeakyReLU(inplace=True),
-            nn.Dropout(p=0.5),  # Dropout layer
-            nn.Linear(1024, edge_features_size)  # Output edge features
-        )
+    def forward(self, x, edge_index, edge_attr):
+        # Perform message passing
+        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
 
-    def forward(self, node1_features, node2_features, edges):
-        edge_input = torch.cat([node1_features, edges, node2_features], dim=-1)
-        updated_edges = self.edge_mlp(edge_input)
+    def message(self, x_i, x_j, edge_attr):
+        # Concatenate source node feature, target node feature, and edge feature
+        message_input = torch.cat([x_i, edge_attr, x_j], dim=-1)
+        return self.message_mlp(message_input)
 
-        depth_map1 = self.node_mlp(node1_features)
-        depth_map2 = self.node_mlp(node2_features)
-
-        return depth_map1, depth_map2, updated_edges
+    def update(self, aggr_out, x):
+        # Concatenate original node feature with aggregated message
+        updated_node_features = torch.cat([x, aggr_out], dim=-1)
+        return self.node_mlp(updated_node_features)

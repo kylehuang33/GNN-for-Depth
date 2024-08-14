@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torch_geometric.data import Data
 import h5py, torch, cv2
 import numpy as np
 
@@ -48,10 +49,10 @@ class DepthDataset(Dataset):
 
 
         ## Depth Embedding
-        depth_emb = torch.load(depth_emb_path)
+        depth_emb = self.normalize(torch.load(depth_emb_path))
 
         ## depth map
-        depth_map = torch.load(depth_path)
+        depth_map = self.normalize(torch.load(depth_path))
 
         ## get the actual depth
         actual_depth_path = img_path.replace("rgb", "sync_depth").replace('.jpg', '.png')
@@ -59,13 +60,6 @@ class DepthDataset(Dataset):
 
 
 
-        ## Scene Graph
-        # threshold = 0.1
-
-        # with h5py.File(scenegraph_path, 'r') as h5_file:
-        #     # Load each tensor into a dictionary
-        #     # outputs = {key: torch.from_numpy(h5_file[key][:]) for key in h5_file.keys()}
-        #     loaded_output_dict = {key: torch.tensor(h5_file[key]) for key in h5_file.keys()}
         with h5py.File(scenegraph_path, 'r') as h5_file:
             loaded_output_dict = {key: torch.tensor(np.array(h5_file[key])) for key in h5_file.keys()}
 
@@ -78,21 +72,11 @@ class DepthDataset(Dataset):
         keep = torch.logical_and(probas.max(-1).values > self.threshold, 
                                 torch.logical_and(probas_sub.max(-1).values > self.threshold, probas_obj.max(-1).values > self.threshold))
         
-#         mini_threshold = 0.1
-#         # Calculate the keep mask with an additional check for valid bounding boxes
-#         valid_bboxes = (loaded_output_dict['sub_boxes'][0, :, 2] > mini_threshold) & (loaded_output_dict['sub_boxes'][0, :, 3] > mini_threshold) & \
-#                        (loaded_output_dict['obj_boxes'][0, :, 2] > mini_threshold) & (loaded_output_dict['obj_boxes'][0, :, 3] > mini_threshold)
+        
 
-#         keep = torch.logical_and(
-#             probas.max(-1).values > threshold, 
-#             torch.logical_and(
-#                 probas_sub.max(-1).values > threshold, 
-#                 torch.logical_and(probas_obj.max(-1).values > threshold, valid_bboxes)
-#             )
-#         )
         
         
-        
+        target_size = (25, 25)
         
         sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, keep], img.size)
         obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
@@ -108,65 +92,75 @@ class DepthDataset(Dataset):
         sub_bboxes_scaled = sub_bboxes_scaled[valid_pairs]
         obj_bboxes_scaled = obj_bboxes_scaled[valid_pairs]
         relations = relations[valid_pairs]
-
-
         
-#         probas_dic = {
-#             'probas': probas[keep],
-#             'probas_sub': probas_sub[keep],
-#             'probas_obj': probas_obj[keep]
-#         }
+        
+        
+        sub_idxs, nodes1 = self.assign_index(sub_bboxes_scaled, [], threshold=0.7)
+        obj_idxs, nodes2 = self.assign_index(obj_bboxes_scaled, nodes1, threshold=0.7)
+        
+        all_idxs = sub_idxs + obj_idxs
+        bbox_lists = torch.concat((sub_bboxes_scaled, obj_bboxes_scaled), dim=0)
+        
+        unique_idxs = set()
+        filtered_idxs = []
+        filtered_bboxes = []
 
-        # obj_relationship = {
-        #     'relation': relations,
-        #     'bbox_sub': sub_bboxes_scaled,
-        #     'bbox_obj': obj_bboxes_scaled
-        # }
+        for idx, bbox in zip(all_idxs, bbox_lists):   
+            if idx not in unique_idxs:
+                unique_idxs.add(idx)
+                filtered_idxs.append(idx)
+                filtered_bboxes.append(bbox.tolist())  
+
+        # Sort the filtered indices along with their corresponding bounding boxes
+        sorted_wrapped = sorted(zip(filtered_idxs, filtered_bboxes), key=lambda x: x[0])
+        sorted_idxs, sorted_bboxes = zip(*sorted_wrapped)
+
+        # Convert them back to torch tensors
+        sorted_idxs = torch.tensor(sorted_idxs, dtype=torch.long)
+        sorted_bboxes = torch.tensor(sorted_bboxes, dtype=torch.int32)        
+        
+
         
         
         # Apply transform to image and depth
         img = self.transform(img)
+        img = self.normalize(img)
         actual_depth = self.transform(actual_depth).float()
         
+        device = 'cpu'
         
         
-        target_size = (25, 25)
+        # pool_visual_content_and_depth(sorted_bboxes, embedding, target_size=(50, 50)):
+
         
-        # Apply the pooling function to the current batch element
-        pooled_sub_images, pooled_obj_images = self.pool_visual_content_and_depth(
-            sub_bboxes_list=sub_bboxes_scaled,
-            obj_bboxes_list=obj_bboxes_scaled,
-            image=img,
-            target_size=target_size)
+        pooled_images = self.pool_visual_content_and_depth(
+            sorted_bboxes=sorted_bboxes,
+            embedding=img,
+            target_size=target_size).to(device)
         
-        pooled_sub_depths, pooled_obj_depths = self.pool_visual_content_and_depth(
-            sub_bboxes_list=sub_bboxes_scaled,
-            obj_bboxes_list=obj_bboxes_scaled,
-            image=depth_emb[0],
-            target_size=target_size)
+        pooled_depths = self.pool_visual_content_and_depth(
+            sorted_bboxes=sorted_bboxes,
+            embedding=depth_emb[0],
+            target_size=target_size).to(device)
         
-        pooled_sub_act_depths, pooled_obj_act_depths = self.pool_visual_content_and_depth(
-            sub_bboxes_list=sub_bboxes_scaled,
-            obj_bboxes_list=obj_bboxes_scaled,
-            image=actual_depth,
-            target_size=target_size)
+        pooled_act_depths = self.pool_visual_content_and_depth(
+            sorted_bboxes=sorted_bboxes,
+            embedding=actual_depth,
+            target_size=target_size).to(device)
         
         
         
-        # if pooled_sub_images.numel() == 0 or pooled_obj_images.numel() == 0 or pooled_sub_depths.numel() == 0 or pooled_obj_depths.numel() == 0:
-        #     # Return a flag or skip the item
-        #     return None
+        # node embedding
+        node_embeddings = torch.cat([pooled_images, pooled_depths], dim=1).to(device)
         
-        # pooled_visuals = {
-        #     'sub_imgs': pooled_sub_images, 
-        #     'obj_imgs': pooled_obj_images, 
-        #     'sub_depth_emb': pooled_sub_depths, 
-        #     'obj_depth_emb': pooled_obj_depths,
-        #     'sub_act_depths': pooled_sub_act_depths,
-        #     'obj_act_depths': pooled_obj_act_depths
-        # }
-#         pooled_visuals = None
+        edge_index = torch.tensor([sub_idxs, obj_idxs]).to(device)
         
+#         edge_embeddings = torch.tensor(relations, dtype=torch.float).to(device)
+        edge_embeddings = relations.clone().detach().float().to(device)
+        
+        
+        
+        gnndata = Data(x=node_embeddings, edge_index=edge_index, edge_attr=edge_embeddings)
 
 
         ## return data
@@ -175,18 +169,9 @@ class DepthDataset(Dataset):
             'depth_emb': depth_emb,
             'depth_map': depth_map,
             'depth': actual_depth,
-            # 'scene_graphs': obj_relationship,
-            'relation': relations,
-            'bbox_sub': sub_bboxes_scaled,
-            'bbox_obj': obj_bboxes_scaled,
-            # 'pooled_visuals': pooled_visuals
-            'sub_imgs': pooled_sub_images, 
-            'obj_imgs': pooled_obj_images, 
-            'sub_depth_emb': pooled_sub_depths, 
-            'obj_depth_emb': pooled_obj_depths,
-            'sub_act_depths': pooled_sub_act_depths,
-            'obj_act_depths': pooled_obj_act_depths
-
+            'pooled_act_depths': pooled_act_depths,
+            'bboxs': filtered_bboxes,
+            'gnndata': gnndata
         }
         
         
@@ -237,49 +222,89 @@ class DepthDataset(Dataset):
 
 
     
-    def pool_visual_content_and_depth(self, sub_bboxes_list, obj_bboxes_list, image, target_size=(224, 224), actual=False):
-        # Define the pooling operation
+    def pool_visual_content_and_depth(self, sorted_bboxes, embedding, target_size=(50, 50)):
+
         pool = nn.AdaptiveAvgPool2d(target_size)
 
-        # Pooling subject images
-        pooled_sub_images = []
+        pooled_embs = []
 
-        for bbox in sub_bboxes_list:
-            # Crop the image based on the bounding box
-            cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+        for bbox in sorted_bboxes:
+            cropped_emb = embedding[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
+
+            if cropped_emb.dim() == 2:
+                cropped_emb = cropped_emb.unsqueeze(0)  
+
+            pooled_emb = pool(cropped_emb.unsqueeze(0)).squeeze(0)
+
+            flattened_emb = pooled_emb.view(-1)
             
-            if cropped_img.dim() == 2:
-                cropped_img = cropped_img.unsqueeze(0)
-            
-            
-            # Apply pooling
-            pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)  # Add batch dim, then remove after pooling
-            # Flatten the pooled image
-            flattened_img = pooled_img.view(-1)
-            pooled_sub_images.append(flattened_img)
+            pooled_embs.append(flattened_emb)
 
 
-        # Pooling object images
-        pooled_obj_images = []
-        
-        for bbox in obj_bboxes_list:
-            # Crop the image based on the bounding box
-            cropped_img = image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]
-            
-            
-            if cropped_img.dim() == 2:
-                cropped_img = cropped_img.unsqueeze(0)
-            
-            
-            # Apply pooling
-            pooled_img = pool(cropped_img.unsqueeze(0)).squeeze(0)
-            # Flatten the pooled image
-            flattened_img = pooled_img.view(-1)
-            pooled_obj_images.append(flattened_img)
+        pooled_embs = torch.stack(pooled_embs) if pooled_embs else torch.empty(0)
 
+        return pooled_embs
+    
+    
+    def calculate_iou(self, box1, box2):
 
-        # Convert lists to tensors
-        pooled_sub_images = torch.stack(pooled_sub_images) if pooled_sub_images else torch.empty(0)
-        pooled_obj_images = torch.stack(pooled_obj_images) if pooled_obj_images else torch.empty(0)
+        x1, y1, x2, y2 = box1
+        x3, y3, x4, y4 = box2
 
-        return pooled_sub_images, pooled_obj_images
+        # Calculate intersection coordinates
+        x_inter1 = max(x1, x3)
+        y_inter1 = max(y1, y3)
+        x_inter2 = min(x2, x4)
+        y_inter2 = min(y2, y4)
+
+        # Calculate intersection dimensions
+        width_inter = max(0, x_inter2 - x_inter1)
+        height_inter = max(0, y_inter2 - y_inter1)
+
+        # Calculate intersection area
+        area_inter = width_inter * height_inter
+
+        # Calculate areas of the input boxes
+        width_box1 = abs(x2 - x1)
+        height_box1 = abs(y2 - y1)
+        area_box1 = width_box1 * height_box1
+
+        width_box2 = abs(x4 - x3)
+        height_box2 = abs(y4 - y3)
+        area_box2 = width_box2 * height_box2
+
+        # Calculate union area
+        area_union = area_box1 + area_box2 - area_inter
+
+        # Calculate IoU
+        if area_union == 0:
+            return 0  # avoid division by zero
+        iou = area_inter / area_union
+
+        return iou
+    
+    
+    def assign_index(self, bounding_boxes, nodes, threshold=0.5):
+        indices = []
+        existing_boxes = nodes
+
+        for box in bounding_boxes:
+            found_match = False
+            for idx, existing_box in enumerate(existing_boxes):
+                if self.calculate_iou(box, existing_box) > threshold:
+                    indices.append(idx)
+                    found_match = True
+                    break
+
+            if not found_match:
+                existing_boxes.append(box)
+                indices.append(len(existing_boxes) - 1)
+
+        return indices, existing_boxes
+    
+    
+    def normalize(self, tensor):
+        tensor_min = tensor.min()
+        tensor_max = tensor.max()
+        normalized_tensor = (tensor - tensor_min) / (tensor_max - tensor_min)
+        return normalized_tensor

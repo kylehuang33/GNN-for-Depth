@@ -1,4 +1,5 @@
 import torch
+from torch_geometric.data import Batch, Data
 
 
 def custom_collate(batch):
@@ -14,47 +15,27 @@ def custom_collate(batch):
     depth_embs = torch.stack([item['depth_emb'] for item in batch])
     depth_maps = torch.stack([item['depth_map'] for item in batch])
     depths = torch.stack([item['depth'] for item in batch])
-
-    # scene_graphs = [item['scene_graphs'] for item in batch]
-    relations = torch.stack([item['relation'] for item in batch])
-
-    # max_rel_size = max(item['relation'].size(0) for item in batch)
-
-    # # Pad relations to the same size
-    # padded_relations = [torch.nn.functional.pad(item['relation'], 
-    #                     (0, 0, 0, max_rel_size - item['relation'].size(0))) for item in batch]
-    # relations = torch.stack(padded_relations)
+    
+#     pooled_act_depths = [torch.tensor(item['pooled_act_depths'], dtype=torch.int) for item in batch]
+    pooled_act_depths = [item['pooled_act_depths'].clone().detach().float() for item in batch]
 
 
 
 
+#     bboxs = torch.stack([item['bboxs'] for item in batch])
+    bboxs = [torch.tensor(item['bboxs'], dtype=torch.int) for item in batch]
 
-    bbox_subs = torch.stack([item['bbox_sub'] for item in batch])
-    bbox_objs = torch.stack([item['bbox_obj'] for item in batch])
-    # pooled_visuals = [item['pooled_visuals'] for item in batch]
-        # Stack the visual pooling results
-    sub_imgs = torch.stack([item['sub_imgs'] for item in batch])
-    obj_imgs = torch.stack([item['obj_imgs'] for item in batch])
-    sub_depth_emb = torch.stack([item['sub_depth_emb'] for item in batch])
-    obj_depth_emb = torch.stack([item['obj_depth_emb'] for item in batch])
-    sub_act_depths = torch.stack([item['sub_act_depths'] for item in batch])
-    obj_act_depths = torch.stack([item['obj_act_depths'] for item in batch])
+    gnndata_list = [item['gnndata'] for item in batch]
+
+    # Batch the graph data using PyTorch Geometric's Batch
+    graph_batch = Batch.from_data_list(gnndata_list)
 
     return {
         'image': images,
         'depth_emb': depth_embs,
         'depth_map': depth_maps,
         'depth': depths,
-        # 'scene_graphs': scene_graphs,
-        'relation': relations,
-        'bbox_sub': bbox_subs,
-        'bbox_obj': bbox_objs,
-        #'pooled_visuals': pooled_visuals
-        'sub_imgs': sub_imgs,
-        'obj_imgs': obj_imgs,
-        'sub_depth_emb': sub_depth_emb,
-        'obj_depth_emb': obj_depth_emb,
-        'sub_act_depths': sub_act_depths,
-        'obj_act_depths': obj_act_depths
-
+        'pooled_act_depths': pooled_act_depths,
+        'bboxs': bboxs,
+        'gnndata': graph_batch,  # Batched graph data
     }
