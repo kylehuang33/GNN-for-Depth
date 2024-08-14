@@ -7,6 +7,7 @@ from torchvision import transforms
 from torch_geometric.data import Data
 import h5py, torch, cv2
 import numpy as np
+from statistics import mode
 
 from torch import nn, optim
 
@@ -26,10 +27,19 @@ class DepthDataset(Dataset):
         self.transform = transform if transform else transforms.ToTensor()
         self.mode = mode
         self.threshold = threshold
+        
+        self.cache = {}
+        
+        
 
 
 
     def __getitem__(self, idx):
+        
+        
+        if idx in self.cache:
+            return self.cache[idx]
+        
 
         # image path
         img_path = self.filenames[idx]
@@ -58,6 +68,9 @@ class DepthDataset(Dataset):
         actual_depth_path = img_path.replace("rgb", "sync_depth").replace('.jpg', '.png')
         actual_depth = Image.open(actual_depth_path)
 
+        
+        # the resize size
+        target_size = (25, 25)
 
 
         with h5py.File(scenegraph_path, 'r') as h5_file:
@@ -73,17 +86,15 @@ class DepthDataset(Dataset):
                                 torch.logical_and(probas_sub.max(-1).values > self.threshold, probas_obj.max(-1).values > self.threshold))
         
         
-
         
-        
-        target_size = (25, 25)
+      
         
         sub_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['sub_boxes'][0, keep], img.size)
         obj_bboxes_scaled = self.rescale_bboxes(loaded_output_dict['obj_boxes'][0, keep], img.size)
         relations = loaded_output_dict['rel_logits'][0, keep]
 
-        valid_sub_bboxes = self.validate_bounding_boxes(sub_bboxes_scaled, img.size)
-        valid_obj_bboxes = self.validate_bounding_boxes(obj_bboxes_scaled, img.size)
+        valid_sub_bboxes = self.validate_bounding_boxes(sub_bboxes_scaled, img.size, target_size)
+        valid_obj_bboxes = self.validate_bounding_boxes(obj_bboxes_scaled, img.size, target_size)
 
         # Combine validity of subject and object bounding boxes
         valid_pairs = torch.tensor([vs and vo for vs, vo in zip(valid_sub_bboxes, valid_obj_bboxes)], dtype=torch.bool)
@@ -126,12 +137,9 @@ class DepthDataset(Dataset):
         img = self.transform(img)
         img = self.normalize(img)
         actual_depth = self.transform(actual_depth).float()
+        actual_depth = self.normalize(actual_depth)
         
         device = 'cpu'
-        
-        
-        # pool_visual_content_and_depth(sorted_bboxes, embedding, target_size=(50, 50)):
-
         
         pooled_images = self.pool_visual_content_and_depth(
             sorted_bboxes=sorted_bboxes,
@@ -143,9 +151,9 @@ class DepthDataset(Dataset):
             embedding=depth_emb[0],
             target_size=target_size).to(device)
         
-        pooled_act_depths = self.pool_visual_content_and_depth(
+        pooled_act_depths = self.resize_depth_map(
             sorted_bboxes=sorted_bboxes,
-            embedding=actual_depth,
+            embedding=actual_depth.squeeze(0),
             target_size=target_size).to(device)
         
         
@@ -174,6 +182,7 @@ class DepthDataset(Dataset):
             'gnndata': gnndata
         }
         
+        self.cache[idx] = data
         
         return data
 
@@ -202,10 +211,12 @@ class DepthDataset(Dataset):
 
         return b
 
-    def validate_bounding_boxes(self, bboxes, img_size):
+    def validate_bounding_boxes(self, bboxes, img_size, target_size):
         """Return a list of booleans indicating whether each bounding box is valid."""
         valid_bboxes = []
         img_w, img_h = img_size
+        
+        t_w, t_h = target_size
 
         for bbox in bboxes:
             x1, y1, x2, y2 = bbox
@@ -213,7 +224,8 @@ class DepthDataset(Dataset):
             if y1 < 0: y1 = 0
             if x2 > img_w: x2 = img_w
             if y2 > img_h: y2 = img_h
-            if x2 > x1 and y2 > y1:
+            
+            if (x2 - x1) >= t_w and (y2 - y1) >= t_h:
                 valid_bboxes.append(True)
             else:
                 valid_bboxes.append(False)
@@ -306,5 +318,61 @@ class DepthDataset(Dataset):
     def normalize(self, tensor):
         tensor_min = tensor.min()
         tensor_max = tensor.max()
-        normalized_tensor = (tensor - tensor_min) / (tensor_max - tensor_min)
+        normalized_tensor = (tensor - tensor_min) / ((tensor_max - tensor_min) + 1e-8)
         return normalized_tensor
+    
+    
+    
+    def resize_depth_map(self, sorted_bboxes, embedding, target_size=(25, 25)):
+
+        pooled_embs = []
+
+        for bbox in sorted_bboxes:
+            cropped_emb = embedding[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+
+
+            pooled_emb = self.downsize_depth_map_mode(cropped_emb, target_size)
+
+            flattened_emb = pooled_emb.view(-1)
+            
+            pooled_embs.append(flattened_emb)
+
+
+        pooled_embs = torch.stack(pooled_embs) if pooled_embs else torch.empty(0)
+
+        return pooled_embs
+    
+    
+    def downsize_depth_map_mode(self, depth_map, new_size):
+        
+        original_height, original_width = depth_map.shape[-2], depth_map.shape[-1]
+        new_height, new_width = new_size
+
+        window_height = original_height // new_height
+        window_width = original_width // new_width
+
+        downsized_map = torch.zeros((new_height, new_width), dtype=depth_map.dtype, device=depth_map.device)
+
+        for i in range(new_height):
+            for j in range(new_width):
+                # Define the window boundaries
+                start_row = i * window_height
+                end_row = start_row + window_height
+                start_col = j * window_width
+                end_col = start_col + window_width
+
+                # Extract the window
+                window = depth_map[start_row:end_row, start_col:end_col]
+
+                # Flatten the window
+                flat_window = window.flatten().cpu().numpy()  # Convert to numpy for mode calculation
+
+                # Calculate the mode and handle exceptions
+                try:
+                    downsized_map[i, j] = mode(flat_window)
+                except:
+                    downsized_map[i, j] = torch.tensor(np.median(flat_window), dtype=depth_map.dtype)
+
+        return downsized_map
+    
+    
