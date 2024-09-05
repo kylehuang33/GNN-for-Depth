@@ -1,7 +1,7 @@
 ## 1. Set Up
 
 
-### a. the enviroment(?)
+### a. the enviroment
 ```pip install -r requirement.txt```
 
 ### b. Preparation of datasets please follow [the official BTS repo](https://github.com/cleinc/bts)
@@ -14,11 +14,11 @@ $ python extract_official_train_test_set_from_mat.py nyu_depth_v2_labeled.mat sp
 ```
 ## 2. Prelimieries
 ### a. generating scene graph
-run Storing Scene Graphs.ipynb
+run preprocess/Storing Scene Graphs.ipynb
 
 
 ### b. generate depth map and embedding 
-run Storing the depth embedding.ipynb
+run preprocess/Storing the depth embedding.ipynb
 
 
 
