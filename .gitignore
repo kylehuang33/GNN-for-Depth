@@ -3,3 +3,5 @@
 *.jpg
 backup/
 checkpoints/
+.DS_Store
+*/.DS_Store
