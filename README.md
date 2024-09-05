@@ -13,19 +13,22 @@ $ wget http://horatio.cs.nyu.edu/mit/silberman/nyu_depth_v2/nyu_depth_v2_labeled
 $ python extract_official_train_test_set_from_mat.py nyu_depth_v2_labeled.mat splits.mat ../../dataset/nyu_depth_v2/official_splits/
 ```
 ## 2. Prelimieries
-### a. generating scene graph
+### a. generating scene graphs
 run preprocess/Storing Scene Graphs.ipynb
 
 
-### b. generate depth map and embedding 
+### b. generate depth maps and embeddings 
 run preprocess/Storing the depth embedding.ipynb
 
 
 
 
 ### 3. training
+##### our pretrained model is [here](https://drive.google.com/drive/folders/1Ej4j3Gj0mjMx9I6OGUsvqzsFYUVa3nQG?usp=sharing)
 
 run Training.ipynb
+
+
 
 ### 4. Evaluation
 
